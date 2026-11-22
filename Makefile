@@ -38,5 +38,8 @@ ztest: doctor
 fault: doctor
 	$(PYTEST) -m fault $(PYTEST_ARGS)
 
+stress: doctor
+	$(PYTEST) -m stress $(PYTEST_ARGS)
+
 clean:
 	rm -rf logs .pytest_cache $(WS)/build/pytest
