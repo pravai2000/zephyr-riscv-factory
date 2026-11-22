@@ -1,2 +1,2 @@
-pytest
-pexpect
+pexpect==4.9.0
+pytest==9.2.0

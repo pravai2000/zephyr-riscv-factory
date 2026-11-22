@@ -1,4 +1,7 @@
+import pytest
 from ztest_parse import parse_ztest, verdict
+
+pytestmark = pytest.mark.unit
 
 SAMPLE = """\
 *** Booting Zephyr OS build v4.0.0 ***
