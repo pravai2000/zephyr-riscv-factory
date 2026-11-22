@@ -23,15 +23,12 @@ def pytest_addoption(parser):
                      help="pristine rebuild before testing")
 
 
-@pytest.fixture
-def firmware(request):
-    """Build the app named by @pytest.mark.app (or --app) once; return its build dir."""
-    marker = request.node.get_closest_marker("app")
-    app_rel = marker.args[0] if marker else request.config.getoption("--app")
-    board = request.config.getoption("--board")
+def build_app(config, app_rel):
+    """Build an app once per session; return its build directory."""
+    board = config.getoption("--board")
     key = (app_rel, board)
     if key not in _BUILT:
-        pristine = "always" if request.config.getoption("--rebuild") else "auto"
+        pristine = "always" if config.getoption("--rebuild") else "auto"
         app = REPO / app_rel
         bdir = WS / "build" / "pytest" / app.name / board.replace("/", "_")
         cmd = ["west", "build", "-p", pristine, "-b", board, str(app), "-d", str(bdir)]
@@ -42,6 +39,13 @@ def firmware(request):
             pytest.fail(f"west build failed for {app_rel}:\n{tail}", pytrace=False)
         _BUILT[key] = bdir
     return _BUILT[key]
+
+
+def spawn_qemu(bdir, logfile):
+    child = pexpect.spawn("west", ["build", "-d", str(bdir), "-t", "run"],
+                          cwd=str(WS), encoding="utf-8", timeout=BOOT_TIMEOUT)
+    child.logfile_read = logfile
+    return child
 
 
 def _stop(child):
@@ -60,20 +64,48 @@ def _stop(child):
     child.close(force=True)
 
 
+def _open_log(name):
+    logdir = REPO / "logs"
+    logdir.mkdir(exist_ok=True)
+    return open(logdir / f"{name}.log", "w")
+
+
+@pytest.fixture
+def firmware(request):
+    marker = request.node.get_closest_marker("app")
+    app_rel = marker.args[0] if marker else request.config.getoption("--app")
+    return build_app(request.config, app_rel)
+
+
 @pytest.fixture
 def qemu(firmware, request):
     """Boot the built image in QEMU; yield the pexpect child."""
-    logdir = REPO / "logs"
-    logdir.mkdir(exist_ok=True)
-    logfile = open(logdir / f"{request.node.name}.log", "w")
-    child = pexpect.spawn("west", ["build", "-d", str(firmware), "-t", "run"],
-                          cwd=str(WS), encoding="utf-8", timeout=BOOT_TIMEOUT)
-    child.logfile_read = logfile
+    logfile = _open_log(request.node.name)
+    child = spawn_qemu(firmware, logfile)
     try:
         yield child
     finally:
         _stop(child)
         logfile.close()
+
+
+@pytest.fixture(scope="session")
+def run_to_marker(pytestconfig):
+    """f(app_rel, pattern, timeout) -> console text up to and including pattern."""
+    def run(app_rel, pattern, timeout=120):
+        bdir = build_app(pytestconfig, app_rel)
+        logfile = _open_log(Path(app_rel).name)
+        child = spawn_qemu(bdir, logfile)
+        try:
+            child.expect(pattern, timeout=timeout)
+            return child.before + child.after
+        except (pexpect.TIMEOUT, pexpect.EOF) as exc:
+            pytest.fail(f"{app_rel}: {type(exc).__name__} waiting for {pattern!r}. "
+                        f"Console tail:\n{(child.before or '')[-1500:]}", pytrace=False)
+        finally:
+            _stop(child)
+            logfile.close()
+    return run
 
 
 class Shell:
