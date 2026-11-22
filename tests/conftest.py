@@ -3,6 +3,7 @@ import re
 import signal
 import subprocess
 from pathlib import Path
+from detect import expect_ok
 
 import pexpect
 import pytest
@@ -107,20 +108,20 @@ def run_to_marker(pytestconfig):
             logfile.close()
     return run
 
-
 class Shell:
-    """Send a shell command, return its output as clean text."""
+    """Send a shell command, return its output as clean text.
+    Raises TargetFault / TargetHang / TargetExit if the target misbehaves."""
 
     def __init__(self, child):
         self.child = child
 
     def wait_ready(self):
-        self.child.expect_exact(PROMPT, timeout=BOOT_TIMEOUT)
+        expect_ok(self.child, PROMPT, BOOT_TIMEOUT)
 
     def run(self, cmd, timeout=10):
         self.child.sendline(cmd)
-        self.child.expect_exact(PROMPT, timeout=timeout)
-        text = ANSI.sub("", self.child.before).replace("\r", "")
+        before = expect_ok(self.child, PROMPT, timeout)
+        text = ANSI.sub("", before).replace("\r", "")
         lines = text.split("\n")
         if lines and cmd in lines[0]:          # drop the echoed command line
             lines = lines[1:]
