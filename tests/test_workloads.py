@@ -60,7 +60,7 @@ def test_producer_consumer_splits(sh, name, threads):
 
 @pytest.mark.parametrize("args, needle", [
     ("workload=bogus", "unknown workload"),
-    ("seed=1", "wrong parameter count"),
+    ("seed=1", "workload=mutex|sem|msgq is required"),
     ("workload=sem threads=1", "needs threads >= 2"),
     ("workload=msgq unsafe=1", "unsafe only applies"),
 ])

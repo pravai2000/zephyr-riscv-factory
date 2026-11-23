@@ -77,6 +77,7 @@ static void start_threads(uint32_t n, uint32_t first_consumer,
 	for (uint32_t i = 0; i < n; i++) {
 		k_thread_start(&wl_threads[i]);
 	}
+        k_sched_unlock();
 }
 
 static void join_threads(uint32_t n)
@@ -124,7 +125,9 @@ static void mutex_worker(void *p1, void *p2, void *p3)
 			k_mutex_lock(&wl_mutex, K_FOREVER);
 		}
 		v = wl_counter;
-		if (c->unsafe || (r & 0x7u) == 0) {
+		if (c->unsafe) {
+			k_msleep(1); /* hold the read modify-write window open */
+		} else if ((r & 0x7u) == 0) {
 			k_yield();       /* switch threads in the middle of read-modify-write */
 		}
 		wl_counter = v + 1;
