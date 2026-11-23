@@ -4,6 +4,7 @@
 #include <string.h>
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
+#include "workloads.h"
 
 #define MAX_THREADS     8
 #define STACK_SIZE      2048
@@ -54,7 +55,7 @@ static void worker(void *p1, void *p2, void *p3)
 }
 
 /* Returns 0 if parsed, 1 if `arg` is not for `key`, -1 on a bad value. */
-static int parse_kv(const char *arg, const char *key, uint32_t *out, unsigned long max)
+int parse_kv(const char *arg, const char *key, uint32_t *out, unsigned long max)
 {
 	size_t n = strlen(key);
 	char *end;
@@ -117,6 +118,7 @@ static int cmd_start(const struct shell *sh, size_t argc, char **argv)
 
 SHELL_STATIC_SUBCMD_SET_CREATE(stress_cmds,
 	SHELL_CMD_ARG(start, NULL, "start [seed=N] [threads=1..8] [iters=N]", cmd_start, 1, 3),
-	SHELL_SUBCMD_SET_END);
+        SHELL_CMD_ARG(run, NULL, "run workload=mutex|sem|msgq [seed=N] [threads=N] [iters=N] [unsafe=0|1]",
+		      cmd_run, 2, 4), SHELL_SUBCMD_SET_END);
 
 SHELL_CMD_REGISTER(stress, &stress_cmds, "seeded stress workload", NULL);
