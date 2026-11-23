@@ -243,6 +243,8 @@ static void msgq_consumer(void *p1, void *p2, void *p3)
 	struct wl_ctx *c = p1;
 	uint32_t last[WL_MAX_THREADS] = { 0 };   /* seq+1 of last message seen per producer */
 
+	k_msleep(2);
+
 	for (uint32_t i = 0; i < c->quota; i++) {
 		struct wl_msg m;
 		int rc = k_msgq_get(&wl_q, &m, K_NO_WAIT);
@@ -269,6 +271,9 @@ static void msgq_consumer(void *p1, void *p2, void *p3)
 			cov_hit(COV_MSGQ_YIELD);
 			k_yield();
 		}
+	        if ((m.value & 7u) == 0) {
+			//k_msleep(1);
+		}
 	}
 }
 
@@ -279,17 +284,24 @@ static void msgq_producer(void *p1, void *p2, void *p3)
 
 	for (uint32_t i = 0; i < c->iters; i++) {
 		struct wl_msg m = { .producer = c->id, .seq = i, .value = wl_rand(&st) };
+		int rc = k_msgq_put(&wl_q, &m, K_NO_WAIT);
 
-		if (k_msgq_put(&wl_q, &m, WL_WAIT) != 0) {
+		if (rc != 0) {
+			cov_hit(COV_MSGQ_PUT_BLOCKED);       /* queue was full */
+			rc = k_msgq_put(&wl_q, &m, WL_WAIT);
+		}
+		if (rc != 0) {
 			atomic_inc(&wl_put_to);
 			return;
 		}
 		c->sent_sum += m.value;
 		if ((m.value & 3u) == 0) {
+			cov_hit(COV_MSGQ_YIELD);
 			k_yield();
 		}
 	}
 }
+
 
 
 static void run_msgq(struct report *rep, uint32_t seed, uint32_t n, uint32_t iters)

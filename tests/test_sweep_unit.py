@@ -1,6 +1,6 @@
 import pytest
 
-from sweep import COVERAGE, parse_cover, record_cover, seed_list
+from sweep import COVERAGE, missing_bins,  parse_cover, record_cover, seed_list
 
 pytestmark = pytest.mark.unit
 
@@ -27,3 +27,14 @@ def test_record_cover_accumulates():
     record_cover({"unit_test_bin": 3})
     assert COVERAGE["unit_test_bin"] == 5
     del COVERAGE["unit_test_bin"]          # leave real session data untouched
+
+
+def test_missing_bins_reports_zero_and_absent():
+    totals = {"mutex_contended": 3, "mutex_yield_in_cs": 0}
+    assert missing_bins(totals, "mutex") == ["mutex_yield_in_cs"]
+    assert missing_bins({}, "mutex") == ["mutex_contended", "mutex_yield_in_cs"]
+
+
+def test_missing_bins_empty_when_all_hit():
+    totals = {"msgq_put_blocked": 1, "msgq_get_blocked": 2, "msgq_yield": 5}
+    assert missing_bins(totals, "msgq") == []

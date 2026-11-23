@@ -61,6 +61,15 @@ def record_cover(cover):
     for name, count in cover.items():
         COVERAGE[name] = COVERAGE.get(name, 0) + count
 
+WAIVED = set()   # bins that cannot be hit by design; every entry needs a comment saying why
+
+
+def missing_bins(totals, workload=None):
+    """Expected bins with zero hits in totals. Restrict to one workload if given."""
+    names = EXPECTED_BINS[workload] if workload else set().union(*EXPECTED_BINS.values())
+    return sorted(b for b in names if totals.get(b, 0) == 0 and b not in WAIVED)
+
+
 def parse_workload(out):
     m = RESULT.search(out)
     assert m, f"no WORKLOAD RESULT in output:\n{out}"
