@@ -3,7 +3,7 @@ PYTEST_ARGS ?=
 WS          := $(abspath $(CURDIR)/..)
 
 .DEFAULT_GOAL := help
-.PHONY: help doctor test quick unit smoke shell ztest fault clean
+.PHONY: help doctor test quick unit smoke shell ztest fault clean regress
 
 help:
 	@echo "make doctor  check tools and workspace"
@@ -40,6 +40,8 @@ fault: doctor
 
 stress: doctor
 	$(PYTEST) -m stress $(PYTEST_ARGS)
+regress:
+	python scripts/regress.py $(REGRESS_ARGS)
 
 clean:
 	rm -rf logs .pytest_cache $(WS)/build/pytest

@@ -8,6 +8,9 @@ from sweep import COVERAGE, seed_list
 
 import pexpect
 import pytest
+import json
+from classify import classify
+from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 WS = REPO.parent                      # the west workspace
@@ -17,6 +20,37 @@ PROMPT = "factory> "
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 _BUILT = {}                           # (app, board) -> build dir
 
+TEST_RESULTS = []
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    rep = outcome.get_result()
+    if rep.when == "call" or (rep.when == "setup" and rep.outcome != "passed"):
+        text = rep.longreprtext if rep.failed else ""
+        category = classify(rep.outcome, text)
+        if rep.failed and rep.when == "setup" and category == "ASSERT":
+            category = "ERROR"
+        TEST_RESULTS.append({
+            "id": rep.nodeid,
+            "outcome": rep.outcome,
+            "category": category,
+            "seconds": round(rep.duration, 3),
+            "markers": sorted({m.name for m in item.iter_markers()} - {"parametrize"}),
+        })
+
+
+def pytest_sessionfinish(session, exitstatus):
+    path = session.config.getoption("--results-json")
+    if not path:
+        return
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(json.dumps({
+        "exitstatus": int(exitstatus),
+        "tests": TEST_RESULTS,
+        "coverage": dict(sorted(COVERAGE.items())),
+    }, indent=2))
 
 
 def pytest_terminal_summary(terminalreporter):
@@ -36,6 +70,8 @@ def pytest_addoption(parser):
                      help="pristine rebuild before testing")
     parser.addoption("--seeds", type=int, default=10,
                      help="number of seeds each seed-sweep test runs (default 10)")
+    parser.addoption("--results-json", default=None,
+                     help="write per-test results and coverage totals to this JSON file")
 
 def pytest_generate_tests(metafunc):
     if "seed" not in metafunc.fixturenames:
