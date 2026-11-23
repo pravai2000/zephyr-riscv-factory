@@ -44,14 +44,34 @@ EXPECTED_CHECKS = {
              "order_violations", "queue_empty", "timeouts"},
 }
 
+COVER = re.compile(r"COVER:(\w+)=(\d+)")
+EXPECTED_BINS = {
+    "mutex": {"mutex_contended", "mutex_yield_in_cs"},
+    "sem": {"sem_take_blocked", "sem_backlog", "sem_yield"},
+    "msgq": {"msgq_put_blocked", "msgq_get_blocked", "msgq_yield"},
+}
+COVERAGE = {}      # bin name -> total hits across the whole pytest session
+
+
+def parse_cover(out):
+    return {name: int(count) for name, count in COVER.findall(out)}
+
+
+def record_cover(cover):
+    for name, count in cover.items():
+        COVERAGE[name] = COVERAGE.get(name, 0) + count
 
 def parse_workload(out):
     m = RESULT.search(out)
     assert m, f"no WORKLOAD RESULT in output:\n{out}"
+    cover = parse_cover(out)
+    record_cover(cover)
     return {
         "result": m[5], "failed": int(m[4]),
         "checks": {n: (st, int(e), int(a)) for st, n, e, a in CHECK.findall(out)},
+        "cover": cover,
     }
+
 
 
 def parse_start(out):

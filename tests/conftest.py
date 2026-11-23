@@ -4,7 +4,7 @@ import signal
 import subprocess
 from pathlib import Path
 from detect import TargetProblem, expect_ok
-from sweep import seed_list
+from sweep import COVERAGE, seed_list
 
 import pexpect
 import pytest
@@ -17,6 +17,17 @@ PROMPT = "factory> "
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 _BUILT = {}                           # (app, board) -> build dir
 
+
+
+def pytest_terminal_summary(terminalreporter):
+    if not COVERAGE:
+        return
+    terminalreporter.section("firmware functional coverage")
+    width = max(len(name) for name in COVERAGE)
+    for name in sorted(COVERAGE):
+        total = COVERAGE[name]
+        note = "   <-- never hit" if total == 0 else ""
+        terminalreporter.write_line(f"{name:<{width}}  {total:>10}{note}")
 
 def pytest_addoption(parser):
     parser.addoption("--board", default="qemu_riscv32")

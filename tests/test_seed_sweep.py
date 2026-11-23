@@ -1,7 +1,13 @@
 import pytest
 
-from sweep import (EXPECTED_CHECKS, hint, model_checksum, parse_start,
+from sweep import (EXPECTED_CHECKS, EXPECTED_BINS, hint, model_checksum, parse_start,
                    parse_workload, run_cmd)
+
+
+@pytest.mark.parametrize("name", ["mutex", "sem", "msgq"])
+def test_cover_markers_present(shared, name):
+    r = parse_workload(run_cmd(shared, f"stress run workload={name} seed=1 iters=200"))
+    assert set(r["cover"]) == EXPECTED_BINS[name]
 
 pytestmark = [pytest.mark.app("apps/stress"), pytest.mark.stress]
 
@@ -31,3 +37,4 @@ def test_unsafe_mutex_is_always_caught(shared, request, seed):
     cmd = f"stress run workload=mutex seed={seed} iters=100 unsafe=1"
     r = parse_workload(run_cmd(shared, cmd))
     assert r["checks"]["counter"][0] == "FAIL", f"lost updates not detected{hint(cmd)}"
+

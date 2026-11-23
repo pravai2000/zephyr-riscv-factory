@@ -7,6 +7,7 @@
 #include <zephyr/shell/shell.h>
 
 #include "workloads.h"
+#include "cov.h"
 
 #define WL_MAX_THREADS 8
 #define WL_STACK_SIZE  2048
@@ -121,14 +122,16 @@ static void mutex_worker(void *p1, void *p2, void *p3)
 		uint32_t r = wl_rand(&st);
 		uint32_t v;
 
-		if (!c->unsafe) {
+		if (!c->unsafe && k_mutex_lock(&wl_mutex, K_NO_WAIT) != 0) {
+			cov_hit(COV_MUTEX_CONTENDED);
 			k_mutex_lock(&wl_mutex, K_FOREVER);
 		}
 		v = wl_counter;
 		if (c->unsafe) {
-			k_msleep(1); /* hold the read modify-write window open */
+			k_msleep(1);         /* hold the read-modify-write window open */
 		} else if ((r & 0x7u) == 0) {
-			k_yield();       /* switch threads in the middle of read-modify-write */
+			cov_hit(COV_MUTEX_YIELD_IN_CS);
+			k_yield();           /* safe mode: yield while holding the mutex */
 		}
 		wl_counter = v + 1;
 		if (!c->unsafe) {
@@ -136,6 +139,7 @@ static void mutex_worker(void *p1, void *p2, void *p3)
 		}
 	}
 }
+
 
 static void run_mutex(struct report *rep, uint32_t seed, uint32_t n, uint32_t iters, bool unsafe)
 {
@@ -168,9 +172,13 @@ static void sem_producer(void *p1, void *p2, void *p3)
 	for (uint32_t i = 0; i < c->iters; i++) {
 		uint32_t r = wl_rand(&st);
 
+		if (k_sem_count_get(&wl_sem) > 1) {
+			cov_hit(COV_SEM_BACKLOG);
+		}
 		k_sem_give(&wl_sem);
 		atomic_inc(&wl_given);
 		if ((r & 3u) == 0) {
+			cov_hit(COV_SEM_YIELD);
 			k_yield();
 		}
 	}
@@ -183,17 +191,24 @@ static void sem_consumer(void *p1, void *p2, void *p3)
 
 	for (uint32_t i = 0; i < c->quota; i++) {
 		uint32_t r = wl_rand(&st);
+		int rc = k_sem_take(&wl_sem, K_NO_WAIT);
 
-		if (k_sem_take(&wl_sem, WL_WAIT) != 0) {
+		if (rc != 0) {
+			cov_hit(COV_SEM_TAKE_BLOCKED);
+			rc = k_sem_take(&wl_sem, WL_WAIT);
+		}
+		if (rc != 0) {
 			atomic_inc(&wl_sem_timeouts);
 			return;
 		}
 		atomic_inc(&wl_taken);
 		if ((r & 3u) == 0) {
+			cov_hit(COV_SEM_YIELD);
 			k_yield();
 		}
 	}
 }
+
 
 static void run_sem(struct report *rep, uint32_t seed, uint32_t n, uint32_t iters)
 {
@@ -223,6 +238,40 @@ struct wl_msg {
 K_MSGQ_DEFINE(wl_q, sizeof(struct wl_msg), 4, 4);   /* small on purpose: forces backpressure */
 static atomic_t wl_put_to, wl_get_to, wl_order_bad;
 
+static void msgq_consumer(void *p1, void *p2, void *p3)
+{
+	struct wl_ctx *c = p1;
+	uint32_t last[WL_MAX_THREADS] = { 0 };   /* seq+1 of last message seen per producer */
+
+	for (uint32_t i = 0; i < c->quota; i++) {
+		struct wl_msg m;
+		int rc = k_msgq_get(&wl_q, &m, K_NO_WAIT);
+
+		if (rc != 0) {
+			cov_hit(COV_MSGQ_GET_BLOCKED);       /* queue was empty */
+			rc = k_msgq_get(&wl_q, &m, WL_WAIT);
+		}
+		if (rc != 0) {
+			atomic_inc(&wl_get_to);
+			return;
+		}
+		if (m.producer >= WL_MAX_THREADS) {
+			atomic_inc(&wl_order_bad);
+			continue;
+		}
+		if (m.seq + 1 <= last[m.producer]) {     /* FIFO per producer must hold */
+			atomic_inc(&wl_order_bad);
+		}
+		last[m.producer] = m.seq + 1;
+		c->recv_from[m.producer]++;
+		c->recv_sum += m.value;
+		if ((m.value & 3u) == 0) {
+			cov_hit(COV_MSGQ_YIELD);
+			k_yield();
+		}
+	}
+}
+
 static void msgq_producer(void *p1, void *p2, void *p3)
 {
 	struct wl_ctx *c = p1;
@@ -242,33 +291,6 @@ static void msgq_producer(void *p1, void *p2, void *p3)
 	}
 }
 
-static void msgq_consumer(void *p1, void *p2, void *p3)
-{
-	struct wl_ctx *c = p1;
-	uint32_t last[WL_MAX_THREADS] = { 0 };   /* seq+1 of last message seen per producer */
-
-	for (uint32_t i = 0; i < c->quota; i++) {
-		struct wl_msg m;
-
-		if (k_msgq_get(&wl_q, &m, WL_WAIT) != 0) {
-			atomic_inc(&wl_get_to);
-			return;
-		}
-		if (m.producer >= WL_MAX_THREADS) {
-			atomic_inc(&wl_order_bad);
-			continue;
-		}
-		if (m.seq + 1 <= last[m.producer]) {     /* FIFO per producer must hold */
-			atomic_inc(&wl_order_bad);
-		}
-		last[m.producer] = m.seq + 1;
-		c->recv_from[m.producer]++;
-		c->recv_sum += m.value;
-		if ((m.value & 3u) == 0) {
-			k_yield();
-		}
-	}
-}
 
 static void run_msgq(struct report *rep, uint32_t seed, uint32_t n, uint32_t iters)
 {
@@ -365,13 +387,22 @@ int cmd_run(const struct shell *sh, size_t argc, char **argv)
 
 	shell_print(sh, "WORKLOAD START name=%s seed=%" PRIu32 " threads=%" PRIu32
 		    " iters=%" PRIu32 " unsafe=%" PRIu32, name, seed, n, iters, unsafe);
+
+
+
+
+	cov_reset();
 	if (is_mutex) {
 		run_mutex(&rep, seed, n, iters, unsafe != 0);
+		cov_dump(sh, "mutex_");
 	} else if (is_sem) {
 		run_sem(&rep, seed, n, iters);
+		cov_dump(sh, "sem_");
 	} else {
 		run_msgq(&rep, seed, n, iters);
+		cov_dump(sh, "msgq_");
 	}
+
 	shell_print(sh, "WORKLOAD RESULT name=%s seed=%" PRIu32 " checks=%" PRIu32
 		    " failed=%" PRIu32 " result=%s", name, seed, rep.checks, rep.failed,
 		    rep.failed ? "FAIL" : "PASS");
